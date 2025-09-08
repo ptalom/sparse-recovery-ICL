@@ -1,0 +1,22 @@
+inherit: 
+  - base.yaml
+
+training:
+  task: compressed_sensing
+  task_kwargs:
+    sparsity: 3
+    N: 50
+    Phi: normal  # choose between: identity, fourier, normal, random
+    d: 20
+    tau: 1
+  curriculum:
+    points:
+      start: 41
+      end: 41
+      inc: 0
+      interval: 2000
+
+out_dir: ../models/sparse_recovery
+
+wandb:
+  name: "compressed_sensing"
