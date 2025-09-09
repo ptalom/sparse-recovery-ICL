@@ -88,10 +88,6 @@ class TransformerModel(nn.Module):
         print("DEBUG forward xs:", xs.shape)
         print("DEBUG forward ys:", ys.shape)
 
-        #if ys.dim() == 3 and ys.shape[1] != xs.shape[1]:
-            # ys: [batch, extra_batch, dim] -> [batch, dim]
-        #    ys = ys[:, 0, :]
-
         if inds is None:
             inds = torch.arange(xs.shape[1])
         else:
