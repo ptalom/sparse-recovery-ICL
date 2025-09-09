@@ -157,13 +157,12 @@ class CompressedSensing(Task):
         self.w_b = torch.tensor(w_star, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
 
     def evaluate(self, xs_b):
-        """
-        xs_b : (batch, N, d)
-        Retourne : ys_b de taille (batch, N)
-        """
-        w_b = self.w_b.to(xs_b.device)   # (1, d, 1)
-        ys_b = self.scale * (xs_b @ w_b).squeeze(-1)  # (batch, N)
+        w_b = self.w_b.to(xs_b.device)
+        ys_b = self.scale * (xs_b @ w_b)[:, :, 0]
+        #ys_b = ys_b.squeeze(-1)
+
         return ys_b
+
 
 
     @staticmethod

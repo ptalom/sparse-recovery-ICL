@@ -36,14 +36,18 @@ def get_model_from_run(run_path, step=-1, only_conf=False):
 
 
 def eval_batch(model, task_sampler, xs, xs_p=None):
+    print("in eval_batch")
     task = task_sampler()
-    if torch.cuda.is_available() and model.name.split("_")[0] in ["gpt2", "lstm"]:
-        device = "cuda"
-    else:
-        device = "cpu"
+    device = "cuda" if (torch.cuda.is_available() and model.name.split("_")[0] in ["gpt2", "lstm"]) else "cpu"
 
     if xs_p is None:
+        # Supprimer toute dimension batch supplémentaire
+        if xs.dim() == 4:
+            # xs: [batch, extra_batch, points, dim] -> [batch, points, dim]
+            xs = xs[:, 0, :, :]
         ys = task.evaluate(xs)
+        
+        print("DEBUG ys after evaluate:", ys.shape)
         pred = model(xs.to(device), ys.to(device)).detach()
         metrics = task.get_metric()(pred.cpu(), ys)
     else:
@@ -51,12 +55,25 @@ def eval_batch(model, task_sampler, xs, xs_p=None):
         metrics = torch.zeros(b_size, n_points)
         for i in range(n_points):
             xs_comb = torch.cat((xs[:, :i, :], xs_p[:, i:, :]), dim=1)
+            print("DEBUG xs_comb:", xs_comb.shape)
             ys = task.evaluate(xs_comb)
-
+            print("DEBUG ys shape:", ys.shape)
             pred = model(xs_comb.to(device), ys.to(device), inds=[i]).detach()
             metrics[:, i] = task.get_metric()(pred.cpu(), ys)[:, i]
 
     return metrics
+
+
+
+def gen_standard(data_sampler, n_points, b_size):
+    xs_list = []
+    for _ in range(b_size):
+        xs = data_sampler.sample_xs(n_points, b_size)
+        xs_list.append(xs.squeeze(0))
+    xs_tensor = torch.stack(xs_list, dim=0)
+    print("xs shape =", xs.shape)
+    return xs_tensor, None
+
 
 def gen_coherence_tau(data_sampler, n_points, b_size, tau):
     """
@@ -74,7 +91,7 @@ def gen_coherence_tau(data_sampler, n_points, b_size, tau):
     xs_list = []
 
     for _ in range(b_size):
-        xs, _, _, _ = data_sampler.sample(batch_size=1, n_points=n_points)
+        xs = data_sampler.sample_xs(n_points, b_size)
         xs = xs.squeeze(0)  # shape: (n_points, d)
         if tau == 0:
             xs = torch.randn_like(xs)
@@ -91,16 +108,18 @@ def gen_coherence_tau(data_sampler, n_points, b_size, tau):
     xs_tensor = torch.stack(xs_list, dim=0)  # (batch_size, n_points, d)
     xs_train_pre = xs_tensor.clone()
     xs_test_post = xs_tensor.clone()
+    print("in gen_coherence")
+    print("xs shape =", xs.shape)
     return xs_train_pre, xs_test_post
 
 
 def build_evals(conf):
     n_dims = conf.model.n_dims
-    n_points = conf.training.points
+    n_points = conf.training.curriculum.points.end
     batch_size = conf.training.batch_size
 
-    task_name = conf.task.name
-    data_name = conf.task.name
+    task_name = conf.training.task
+    data_name = conf.training.data
 
     # Arguments de base (communs à toutes les configs)
     base_kwargs = {
@@ -146,6 +165,8 @@ def build_evals(conf):
     for name, kwargs in evaluation_kwargs.items():
         evaluation_kwargs[name] = base_kwargs.copy()
         evaluation_kwargs[name].update(kwargs)
+    print("n_points init",conf.training.curriculum.points)
+    print("n_points end", conf.training.curriculum.points.end)
 
     return evaluation_kwargs
 
@@ -190,7 +211,7 @@ def eval_model(
     """
 
     assert num_eval_examples % batch_size == 0
-    data_sampler = get_data_sampler(data_name, n_dims, **data_sampler_kwargs)
+    data_sampler = get_data_sampler(data_name, n_dims=n_dims, **data_sampler_kwargs)
     task_sampler = get_task_sampler(
         task_name, n_dims, batch_size, **task_sampler_kwargs
     )
@@ -225,7 +246,6 @@ def compute_evals(all_models, evaluation_kwargs, save_path=None, recompute=False
 
             metrics[model.name] = eval_model(model, **kwargs)
         all_metrics[eval_name] = metrics
-
     if save_path is not None:
         with open(save_path, "w") as fp:
             json.dump(all_metrics, fp, indent=2)
@@ -235,12 +255,13 @@ def compute_evals(all_models, evaluation_kwargs, save_path=None, recompute=False
 def get_run_metrics(
     run_path, step=-1, cache=True, skip_model_load=False, skip_baselines=False
 ):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if skip_model_load:
         _, conf = get_model_from_run(run_path, only_conf=True)
         all_models = []
     else:
         model, conf = get_model_from_run(run_path, step)
-        model = model.cuda().eval()
+        model = model.to(device).eval()
         all_models = [model]
         if not skip_baselines:
             all_models += models.get_relevant_baselines(conf.training.task)
@@ -300,8 +321,13 @@ def read_run_dir(run_dir):
     all_runs = {}
     for task in os.listdir(run_dir):
         task_dir = os.path.join(run_dir, task)
+        if not os.path.isdir(task_dir):  # ignorer les fichiers comme .DS_Store
+            continue
         for run_id in os.listdir(task_dir):
             run_path = os.path.join(task_dir, run_id)
+            if not os.path.isdir(run_path):  # ignorer fichiers non-dossiers
+                continue
+
             _, conf = get_model_from_run(run_path, only_conf=True)
             params = {}
             params["run_id"] = run_id
@@ -310,15 +336,9 @@ def read_run_dir(run_dir):
             params["kwargs"] = "_".join(
                 f"{k}={v}" for k, v in conf.training.task_kwargs.items()
             )
-            num_tasks = (
-                conf.training.num_tasks if "num_tasks" in conf.training else None
-            )
+            num_tasks = getattr(conf.training, "num_tasks", None)
             params["num_tasks"] = num_tasks if num_tasks is not None else -1
-            num_examples = (
-                conf.training.num_training_examples
-                if "num_training_examples" in conf.training
-                else None
-            )
+            num_examples = getattr(conf.training, "num_training_examples", None)
             params["num_examples"] = num_examples if num_examples is not None else -1
             params["n_dims"] = conf.model.n_dims
             params["n_layer"] = conf.model.n_layer
@@ -333,6 +353,7 @@ def read_run_dir(run_dir):
     df = pd.DataFrame(all_runs).sort_values("run_name")
     assert len(df) == len(df.run_name.unique())
     return df
+
 
 if __name__ == "__main__":
     run_dir = sys.argv[1]

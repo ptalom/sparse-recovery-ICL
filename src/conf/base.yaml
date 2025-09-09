@@ -11,9 +11,9 @@ training:
     task_kwargs: {}
     batch_size: 64
     learning_rate: 0.0001
-    save_every_steps: 101
-    keep_every_steps: 101
-    train_steps: 101
+    save_every_steps: 1000
+    keep_every_steps: 1000
+    train_steps: 1000
     curriculum:
         dims:
             start: 20

@@ -49,13 +49,6 @@ class CompressedSensingSampler(DataSampler):
         if n_points is None:
             n_points = self.N  # valeur par défaut
 
-        """
-        Retourne :
-            xs : (batch_size, N, d)
-            ys : (batch_size, N, 1)
-            w_star : (batch_size, d)
-            a_star : (batch_size, d)
-        """
         xs_list, ys_list, w_list, a_list = [], [], [], []
 
         for _ in range(batch_size):
@@ -72,30 +65,32 @@ class CompressedSensingSampler(DataSampler):
 
             # Génération de la matrice de mesures M
             M = get_measures(
-                N=self.N,
+                N=n_points,
                 Phi=self.Phi,
                 tau=self.tau,
                 variance=self.variance,
                 seed=self.seed,
             )
-            
-            # Données (X, y) : y = M @ w*
-            X = np.array(M, dtype=np.float32).mean(axis=1)
-            
-            y = X @ w_star                         # (N,)
 
-            # Stockage
+            # Assurez-vous que X est 2D : (N, d)
+            X = np.array(M, dtype=np.float32)
+            if X.ndim > 2:
+                # Si X a plus de 2 dimensions, prenez seulement la première "slice"
+                X = X[0]  # (n_points, d)
+
+            # Couper/ajuster le nombre de points si nécessaire
+            X = X[:n_points, :]  # assure que X a exactement n_points lignes
+
+            # Calcul de y
+            #y = (X @ w_star).reshape(-1, 1)  # (n_points, 1)
+
             xs_list.append(X)
-            ys_list.append(y)  # (N,)
-            w_list.append(w_star)
-            a_list.append(a_star)
+            
+        # Conversion en Tensors
+        xs = torch.tensor(np.stack(xs_list), dtype=torch.float32)    # (batch_size, n_points, d)
 
-        xs = torch.tensor(np.stack(xs_list), dtype=torch.float32)       # (batch, N, d)
-        ys = torch.tensor(np.stack(ys_list), dtype=torch.float32)  # (batch, N)
-        w_star = torch.tensor(np.stack(w_list), dtype=torch.float32)    # (batch, d)
-        a_star = torch.tensor(np.stack(a_list), dtype=torch.float32)    # (batch, d)
-
-        return xs, ys, w_star, a_star
+        print("xs shape = ", xs.shape)
+        return xs
 
 
 class MatrixFactorizationSampler(DataSampler):
