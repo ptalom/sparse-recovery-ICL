@@ -15,7 +15,7 @@ relevant_model_names = {
         "Transformer",
         "Lasso (alpha=0.01)",
         "Least Squares",
-        "L1 minimization"
+        "L1 Minimization (epsilon=1e-06)"
     ],
     "matrix_factorization": [
         "Transformer",
@@ -45,7 +45,7 @@ def basic_plot(metrics, models=None, trivial=1.0):
     ax.set_ylim(-0.1, 1.25)
 
     legend = ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
-    fig.set_size_inches(4, 3)
+    fig.set_size_inches(8, 6)
     for line in legend.get_lines():
         line.set_linewidth(3)
 

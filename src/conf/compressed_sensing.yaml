@@ -6,9 +6,9 @@ training:
   task_kwargs:
     sparsity: 3
     N: 50
-    Phi: normal  # choose between: identity, fourier, normal, random
+    Phi: normal  # choose between: identity, fourier, normal
     d: 20
-    tau: 1
+    tau: 0 # in [0, 1]
   curriculum:
     points:
       start: 41

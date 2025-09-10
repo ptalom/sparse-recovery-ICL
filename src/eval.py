@@ -10,7 +10,7 @@ import torch
 import yaml
 
 import models
-from samplers import get_data_sampler, sample_transformation
+from samplers import get_data_sampler
 from tasks import get_task_sampler
 
 
