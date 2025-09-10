@@ -36,7 +36,6 @@ def get_model_from_run(run_path, step=-1, only_conf=False):
 
 
 def eval_batch(model, task_sampler, xs, xs_p=None):
-    print("in eval_batch")
     task = task_sampler()
     device = "cuda" if (torch.cuda.is_available() and model.name.split("_")[0] in ["gpt2", "lstm"]) else "cpu"
 
@@ -47,7 +46,6 @@ def eval_batch(model, task_sampler, xs, xs_p=None):
             xs = xs[:, 0, :, :]
         ys = task.evaluate(xs)
         
-        print("DEBUG ys after evaluate:", ys.shape)
         pred = model(xs.to(device), ys.to(device)).detach()
         metrics = task.get_metric()(pred.cpu(), ys)
     else:
@@ -55,9 +53,7 @@ def eval_batch(model, task_sampler, xs, xs_p=None):
         metrics = torch.zeros(b_size, n_points)
         for i in range(n_points):
             xs_comb = torch.cat((xs[:, :i, :], xs_p[:, i:, :]), dim=1)
-            print("DEBUG xs_comb:", xs_comb.shape)
             ys = task.evaluate(xs_comb)
-            print("DEBUG ys shape:", ys.shape)
             pred = model(xs_comb.to(device), ys.to(device), inds=[i]).detach()
             metrics[:, i] = task.get_metric()(pred.cpu(), ys)[:, i]
 
@@ -70,47 +66,64 @@ def gen_standard(data_sampler, n_points, b_size):
     for _ in range(b_size):
         xs = data_sampler.sample_xs(n_points, b_size)
         xs_list.append(xs.squeeze(0))
-    xs_tensor = torch.stack(xs_list, dim=0)
-    print("xs shape =", xs.shape)
-    return xs_tensor, None
+    xs_train = torch.stack(xs_list, dim=0)
+    print("In standard generation")
+    return xs_train, None
 
 
-def gen_coherence_tau(data_sampler, n_points, b_size, tau):
+
+def gen_coherence_tau_0(data_sampler, n_points, b_size):
     """
-    Génère xs_train et xs_test pour sparse recovery selon un degré de cohérence tau.
-    
-    Args:
-        data_sampler : instance du sampler (CompressedSensingSampler)
-        n_points : int, nombre d'exemples dans le prompt
-        b_size : int, batch size
-        tau : float entre 0 et 1, cohérence avec la base Phi
-    Returns:
-        xs_train_pre : Tensor (batch_size, n_points, d)
-        xs_test_post : Tensor (batch_size, n_points, d)
+    Tau = 0 → xs totalement aléatoires, train/test identiques
     """
-    xs_list = []
-
-    for _ in range(b_size):
-        xs = data_sampler.sample_xs(n_points, b_size)
-        xs = xs.squeeze(0)  # shape: (n_points, d)
-        if tau == 0:
-            xs = torch.randn_like(xs)
-        else:
-            Phi = torch.tensor(data_sampler.Phi, dtype=xs.dtype, device=xs.device)
-            U, _, _ = torch.linalg.svd(Phi, full_matrices=False)
-            proj = U @ U.T
-            if tau == 1:
-                xs = xs @ proj
-            elif 0 < tau < 1:
-                xs = tau * (xs @ proj) + (1 - tau) * torch.randn_like(xs)
-        xs_list.append(xs)
-
-    xs_tensor = torch.stack(xs_list, dim=0)  # (batch_size, n_points, d)
-    xs_train_pre = xs_tensor.clone()
-    xs_test_post = xs_tensor.clone()
-    print("in gen_coherence")
-    print("xs shape =", xs.shape)
+    xs = data_sampler.sample_xs(n_points, b_size)
+    # Découpage train/test : moitié-moitié
+    split = n_points // 2
+    xs_train_pre = xs[:, :split, :]
+    xs_test_post = xs[:, split:, :]
+    print("In coherence tau=0 generation")
     return xs_train_pre, xs_test_post
+
+
+def gen_coherence_tau_05(data_sampler, n_points, b_size):
+    """
+    Tau = 0.5 → moitié cohérence avec la base Phi, moitié bruit
+    """
+    xs = data_sampler.sample_xs(n_points, b_size)
+    Phi = torch.tensor(data_sampler.Phi, dtype=xs.dtype, device=xs.device)
+    U, _, _ = torch.linalg.svd(Phi, full_matrices=False)
+    proj = U @ U.T
+
+    # Appliquer la cohérence tau=0.5
+    xs_coherent = 0.5 * (xs @ proj) + 0.5 * torch.randn_like(xs)
+
+    # Découpage train/test
+    split = n_points // 2
+    xs_train_pre = xs_coherent[:, :split, :]
+    xs_test_post = xs_coherent[:, split:, :]
+    print("In coherence tau=0.5 generation")
+    return xs_train_pre, xs_test_post
+
+
+def gen_coherence_tau_1(data_sampler, n_points, b_size):
+    """
+    Tau = 1 → xs entièrement projetés sur la base Phi
+    """
+    xs = data_sampler.sample_xs(n_points, b_size)
+    Phi = torch.tensor(data_sampler.Phi, dtype=xs.dtype, device=xs.device)
+    U, _, _ = torch.linalg.svd(Phi, full_matrices=False)
+    proj = U @ U.T
+
+    xs_projected = xs @ proj
+
+    # Découpage train/test
+    split = n_points // 2
+    xs_train_pre = xs_projected[:, :split, :]
+    xs_test_post = xs_projected[:, split:, :]
+    print("In coherence tau=1 generation")
+    return xs_train_pre, xs_test_post
+
+
 
 
 def build_evals(conf):
@@ -121,7 +134,6 @@ def build_evals(conf):
     task_name = conf.training.task
     data_name = conf.training.data
 
-    # Arguments de base (communs à toutes les configs)
     base_kwargs = {
         "task_name": task_name,
         "n_dims": n_dims,
@@ -133,43 +145,40 @@ def build_evals(conf):
 
     evaluation_kwargs = {}
 
-    # Cas standard (par défaut)
+    # --- Cas standard ---
     evaluation_kwargs["standard"] = {"prompting_strategy": "standard"}
 
-    # === Cas Sparse Recovery : on ajoute cohérence avec tau ===
-    if task_name == "sparse_recovery":
-        for tau in [0, 0.5, 1]:
-            evaluation_kwargs[f"tau={tau}"] = {
-                "prompting_strategy": f"coherence_tau_{tau}",
-                "generator_fn": lambda data_sampler, n_pts, b_size, t=tau: gen_coherence_tau(
-                    data_sampler, n_pts, b_size, tau=t
-                ),
-            }
+    # --- Cas Sparse Recovery (Compressed Sensing) ---
+    if task_name == "compressed_sensing":
+        # Trois versions de gen_coherence_tau() avec tau 0, 0.5 et 1
+        evaluation_kwargs["tau=0"] = {"prompting_strategy": "coherence_tau_0"}
+        evaluation_kwargs["tau=0.5"] = {"prompting_strategy": "coherence_tau_05"}
+        evaluation_kwargs["tau=1"] = {"prompting_strategy": "coherence_tau_1"}
 
-        # Exemple d'évaluation bruitée pour SR
-        evaluation_kwargs["noisy_sparse"] = {
-            "task_sampler_kwargs": {"noise_std": 0.1},
-        }
-    
-    # === Cas Matrix Factorization (exemple générique) ===
+        # Exemple d'évaluation bruitée pour Sparse Recovery
+        #evaluation_kwargs["noisy_sparse"] = {
+        #    "prompting_strategy": "standard",  # ou "noisy" si tu as une fonction correspondante
+        #    "task_sampler_kwargs": {"noise_std": 0.1},
+        #}
+
+    # --- Cas Matrix Factorization ---
     elif task_name == "matrix_factorization":
         for rank in [2, 5, 10]:
             evaluation_kwargs[f"rank={rank}"] = {
-                "task_sampler_kwargs": {"target_rank": rank}
+                "prompting_strategy": "standard",
+                "task_sampler_kwargs": {"target_rank": rank},
             }
-        evaluation_kwargs["noisyMF"] = {
-            "task_sampler_kwargs": {"noise_std": 0.1},
-        }
+        #evaluation_kwargs["noisyMF"] = {
+        #    "prompting_strategy": "standard",
+        #    "task_sampler_kwargs": {"noise_std": 0.1},
+        #}
 
-    # === Fusion finale avec base_kwargs ===
+    # --- Fusion finale avec base_kwargs ---
     for name, kwargs in evaluation_kwargs.items():
         evaluation_kwargs[name] = base_kwargs.copy()
         evaluation_kwargs[name].update(kwargs)
-    print("n_points init",conf.training.curriculum.points)
-    print("n_points end", conf.training.curriculum.points.end)
 
     return evaluation_kwargs
-
 
 
 def aggregate_metrics(metrics, bootstrap_trials=1000):
@@ -188,7 +197,6 @@ def aggregate_metrics(metrics, bootstrap_trials=1000):
 
     return {k: v.tolist() for k, v in results.items()}
 
-
 def eval_model(
     model,
     task_name,
@@ -204,14 +212,14 @@ def eval_model(
     """
     Evaluate a model on a task with a variety of strategies.
        Args:
-       - task: which base task we are evaluating on. E.g., "linear_regression"
-       - prompting_strategy: how to construct the prompt, e.g., "random_quadrants"
+       - task: which base task we are evaluating on. E.g., "sparse recovery"
+       - prompting_strategy: how to construct the prompt, e.g., "coherence_tau = 0"
        - num_eval_examples: total number of examples to evaluate on
        - **sampler_kwargs: remaining arguments to pass directly to the sampler
     """
 
     assert num_eval_examples % batch_size == 0
-    data_sampler = get_data_sampler(data_name, n_dims=n_dims, **data_sampler_kwargs)
+    data_sampler = get_data_sampler(data_name, n_dims, **data_sampler_kwargs)
     task_sampler = get_task_sampler(
         task_name, n_dims, batch_size, **task_sampler_kwargs
     )
@@ -228,6 +236,7 @@ def eval_model(
     metrics = torch.cat(all_metrics, dim=0)
 
     return aggregate_metrics(metrics)
+
 
 def compute_evals(all_models, evaluation_kwargs, save_path=None, recompute=False):
     try:
@@ -300,20 +309,12 @@ def conf_to_model_name(conf):
 def baseline_names(name):
     if "OLS" in name:
         return "Least Squares"
-    if name == "averaging":
-        return "Averaging"
-    if "NN" in name:
-        k = name.split("_")[1].split("=")[1]
-        return f"{k}-Nearest Neighbors"
     if "lasso" in name:
         alpha = name.split("_")[1].split("=")[1]
         return f"Lasso (alpha={alpha})"
-    if "gd" in name:
-        return "2-layer NN, GD"
-    if "decision_tree" in name:
-        return "Greedy Tree Learning"
-    if "xgboost" in name:
-        return "XGBoost"
+    if "l1_minimization" in name:
+        epsilon = name.split("_")[-1].split("=")[1]
+        return f"L1 Minimization (epsilon={epsilon})"
     return name
 
 

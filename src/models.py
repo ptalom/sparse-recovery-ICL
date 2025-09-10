@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
+import cvxpy as cp
+
 from transformers import GPT2Model, GPT2Config
 from tqdm import tqdm
-from sklearn.svm import LinearSVC
-from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.linear_model import Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import ConvergenceWarning
 import warnings
-from sklearn import tree
-import xgboost as xgb
-
-from base_models import NeuralNetwork, ParallelNetworks
 
 
 def build_model(conf):
@@ -33,12 +32,13 @@ def get_relevant_baselines(task_name):
         ],
         "compressed_sensing": [
             (LeastSquaresModel, {}),
+            (L1MinimizationModel, {"epsilon": 1e-6})
         ]
-        + [(LassoModel, {"alpha": alpha}) for alpha in [1, 0.1, 0.01, 0.001, 0.0001]],
+        + [(LassoModel, {"alpha": alpha}) for alpha in [1, 0.1, 0.01, 0.001]],
         "matrix_factorization": [
             (LeastSquaresModel, {}),
         ]
-        + [(LassoModel, {"alpha": alpha}) for alpha in [1, 0.1, 0.01, 0.001, 0.0001]],
+        + [(LassoModel, {"alpha": alpha}) for alpha in [1, 0.1, 0.01, 0.001]],
     }
 
     models = [model_cls(**kwargs) for model_cls, kwargs in task_to_baselines[task_name]]
@@ -69,8 +69,8 @@ class TransformerModel(nn.Module):
     @staticmethod
     def _combine(xs_b, ys_b):
         """Interleaves the x's and the y's into a single sequence."""
-        print("DEBUG xs_b type:", type(xs_b), "shape:", xs_b.shape)
-        print("DEBUG ys_b type:", type(ys_b), "shape:", ys_b.shape)
+        #print("DEBUG xs_b type:", type(xs_b), "shape:", xs_b.shape)
+        #print("DEBUG ys_b type:", type(ys_b), "shape:", ys_b.shape)
         bsize, points, dim = xs_b.shape
         ys_b_wide = torch.cat(
             (
@@ -85,8 +85,8 @@ class TransformerModel(nn.Module):
 
     def forward(self, xs, ys, inds=None):
         # DEBUG prints
-        print("DEBUG forward xs:", xs.shape)
-        print("DEBUG forward ys:", ys.shape)
+        #print("DEBUG forward xs:", xs.shape)
+        #print("DEBUG forward ys:", ys.shape)
 
         if inds is None:
             inds = torch.arange(xs.shape[1])
@@ -138,64 +138,87 @@ class LeastSquaresModel:
         return torch.stack(preds, dim=1)
 
 
-
-# Lasso regression (for sparse linear regression).
-# Seems to take more time as we decrease alpha.
 class LassoModel:
     def __init__(self, alpha, max_iter=100000):
-        # the l1 regularizer gets multiplied by alpha.
         self.alpha = alpha
         self.max_iter = max_iter
         self.name = f"lasso_alpha={alpha}_max_iter={max_iter}"
 
-    # inds is a list containing indices where we want the prediction.
-    # prediction made at all indices by default.
     def __call__(self, xs, ys, inds=None):
         xs, ys = xs.cpu(), ys.cpu()
-
         if inds is None:
             inds = range(ys.shape[1])
-        else:
-            if max(inds) >= ys.shape[1] or min(inds) < 0:
-                raise ValueError("inds contain indices where xs and ys are not defined")
 
-        preds = []  # predict one for first point
-
-        # i: loop over num_points
-        # j: loop over bsize
+        preds = []
         for i in inds:
-            pred = torch.zeros_like(ys[:, 0])
-
+            pred = torch.zeros_like(ys[:, 0], dtype=torch.float32)
             if i > 0:
-                pred = torch.zeros_like(ys[:, 0])
                 for j in range(ys.shape[0]):
                     train_xs, train_ys = xs[j, :i], ys[j, :i]
 
-                    # If all points till now have the same label, predict that label.
+                    # Convert to numpy
+                    X_np = train_xs.numpy().astype("float32")
+                    y_np = train_ys.numpy().astype("float32")
 
-                    clf = Lasso(
-                        alpha=self.alpha, fit_intercept=False, max_iter=self.max_iter
-                    )
+                    # Fallback si trop peu de points
+                    if X_np.shape[0] < 2:
+                        w_pred = torch.zeros((X_np.shape[1], 1), dtype=torch.float32)
+                    else:
+                        clf = Lasso(alpha=self.alpha, fit_intercept=False, max_iter=self.max_iter)
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                            clf.fit(X_np, y_np)
+                        w_pred = torch.from_numpy(clf.coef_).float().unsqueeze(1)
 
-                    # Check for convergence.
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("error")
-                        try:
-                            clf.fit(train_xs, train_ys)
-                        except Warning:
-                            print(f"lasso convergence warning at i={i}, j={j}.")
-                            raise
-
-                    w_pred = torch.from_numpy(clf.coef_).unsqueeze(1)
-
-                    test_x = xs[j, i : i + 1]
-                    y_pred = (test_x @ w_pred.float()).squeeze(1)
+                    test_x = xs[j, i : i + 1].float()
+                    y_pred = (test_x @ w_pred).squeeze(1)
                     pred[j] = y_pred[0]
-
             preds.append(pred)
-
         return torch.stack(preds, dim=1)
 
 
-# Gradient Descent and variants.
-# Example usage: gd_model = GDModel(NeuralNetwork, {'in_size': 50, 'hidden_size':400, 'out_size' :1}, opt_alg = 'adam', batch_size = 100, lr = 5e-3, num_steps = 200)
+class L1MinimizationModel:
+    def __init__(self, epsilon=1e-6, solver="SCS"):
+        self.epsilon = epsilon
+        self.solver = solver
+        self.name = f"l1_minimization_epsilon={epsilon}"
+
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+        if inds is None:
+            inds = range(ys.shape[1])
+
+        preds = []
+        for i in inds:
+            pred = torch.zeros_like(ys[:, 0], dtype=torch.float32)
+            if i > 0:
+                for j in range(ys.shape[0]):
+                    train_xs, train_ys = xs[j, :i], ys[j, :i]
+
+                    # Convert to numpy float32
+                    X_np = train_xs.numpy().astype("float32")
+                    y_np = train_ys.numpy().astype("float32")
+
+                    # CVXPY variable
+                    a = cp.Variable(X_np.shape[1])
+                    objective = cp.Minimize(cp.norm(a, 1))
+                    constraints = [cp.norm(X_np @ a - y_np, 2) <= self.epsilon]
+                    problem = cp.Problem(objective, constraints)
+                    try:
+                        problem.solve(solver=self.solver, verbose=False)
+                    except Exception as e:
+                        print(f"[⚠️] CVXPY solver failed at i={i}, j={j}: {e}")
+                        a.value = None
+
+                    if a.value is None:
+                        w_pred = torch.zeros((X_np.shape[1], 1), dtype=torch.float32)
+                    else:
+                        w_pred = torch.from_numpy(a.value.astype("float32")).unsqueeze(1)
+
+                    test_x = xs[j, i : i + 1].float()
+                    y_pred = (test_x @ w_pred).squeeze(1)
+                    pred[j] = y_pred[0]
+            preds.append(pred)
+        return torch.stack(preds, dim=1)
+
+

@@ -12,15 +12,23 @@ class DataSampler:
     def sample_xs(self):
         raise NotImplementedError
 
-def get_data_sampler(name, **kwargs):
+def get_data_sampler(data_name, n_dims, **kwargs):
+    """
+    Retourne une instance du sampler correspondant au nom de data_name,
+    en passant n_dims comme argument obligatoire.
+    """
     samplers = {
         "sparse_recovery": CompressedSensingSampler,
         "matrix_factorization": MatrixFactorizationSampler,
     }
-    name = name.lower()
-    if name in samplers:
-        return samplers[name](**kwargs)
-    raise ValueError(f"Unknown sampler name: {name}")
+    
+    data_name = data_name.lower()
+    if data_name in samplers:
+        sampler_cls = samplers[data_name]
+        return sampler_cls(n_dims=n_dims, **kwargs)
+    
+    print(f"Unknown sampler: {data_name}")
+    raise NotImplementedError
 
 
 
@@ -36,7 +44,6 @@ def sample_transformation(eigenvalues, normalize=False):
 class CompressedSensingSampler(DataSampler):
     def __init__(self, n_dims, **kwargs):
         super().__init__(n_dims)
-        # Enregistre les hyperparamètres qu’on va utiliser
         self.N = kwargs.get("N", 50)
         self.d = kwargs.get("d", n_dims)
         self.s = kwargs.get("s", 5)
@@ -47,9 +54,9 @@ class CompressedSensingSampler(DataSampler):
 
     def sample_xs(self, n_points, batch_size=1, n_dims_truncated=None, **kwargs):
         if n_points is None:
-            n_points = self.N  # valeur par défaut
+            n_points = self.N  
 
-        xs_list, ys_list, w_list, a_list = [], [], [], []
+        xs_list = []
 
         for _ in range(batch_size):
             # Génération du signal sparse a*
@@ -85,11 +92,11 @@ class CompressedSensingSampler(DataSampler):
             #y = (X @ w_star).reshape(-1, 1)  # (n_points, 1)
 
             xs_list.append(X)
-            
+
         # Conversion en Tensors
         xs = torch.tensor(np.stack(xs_list), dtype=torch.float32)    # (batch_size, n_points, d)
 
-        print("xs shape = ", xs.shape)
+        #print("xs shape = ", xs.shape)
         return xs
 
 
@@ -111,9 +118,9 @@ class MatrixFactorizationSampler(DataSampler):
         # X1: (N, n1)  | X2: (N, n2)  | y_star: (N,)
 
         X_np = np.concatenate([X1, X2], axis=1).astype(np.float32)
-        y_np = y_star.astype(np.float32).reshape(-1)
+        #y_np = y_star.astype(np.float32).reshape(-1)
 
-        X = torch.tensor(X_np, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N, n1+n2)
-        y = torch.tensor(y_np, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N)
+        xs = torch.tensor(X_np, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N, n1+n2)
+        #y = torch.tensor(y_np, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N)
 
-        return X, y, None, None
+        return xs

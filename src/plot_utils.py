@@ -15,6 +15,7 @@ relevant_model_names = {
         "Transformer",
         "Lasso (alpha=0.01)",
         "Least Squares",
+        "L1 minimization"
     ],
     "matrix_factorization": [
         "Transformer",

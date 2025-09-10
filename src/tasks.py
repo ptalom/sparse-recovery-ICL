@@ -159,7 +159,6 @@ class CompressedSensing(Task):
     def evaluate(self, xs_b):
         w_b = self.w_b.to(xs_b.device)
         ys_b = self.scale * (xs_b @ w_b)[:, :, 0]
-        #ys_b = ys_b.squeeze(-1)
 
         return ys_b
 
