@@ -23,8 +23,8 @@ Check the `requirements.txt` file to configure the appropriate environment
 
 
 ## Start an experiment
-`train.py` takes as argument a configuration yaml from conf and trains the corresponding model. 
-So you can try:
+`train.py` takes as argument a configuration yaml from conf and trains the corresponding model. So you can try:
+
 For sparse recovery training 
 ```bash
 python train.py --config conf/compressed_sensing.yaml 
