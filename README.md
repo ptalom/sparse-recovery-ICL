@@ -1,5 +1,5 @@
-#### This repo contains the code of our paper : 
-### How Are LLMs Sensitive to Coherence In-context? A Study on Sparse Recovery and Matrix Factorization
+###### This repo contains the code of our paper : 
+##### How Are LLMs Sensitive to Coherence In-context? A Study on Sparse Recovery and Matrix Factorization
 
 ## Goals of the project
 We test the performance of Transformers by changing our coherence controller τ ∈ [0, 1] :
