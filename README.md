@@ -15,15 +15,15 @@ cd src
 ```
 
 ## Getting started
-Check the requirements.txt file to configure the appropriate environment
+Check the `requirements.txt` file to configure the appropriate environment
 
 ## To change configurations
-- For Sparse Recovery task, edit the yaml configuration file : src/conf/compressed_sensing.yaml
-- For Matrix Factorization task, edit the yaml configuration file : src/conf/matrix_factorization.yaml
+- For Sparse Recovery task, edit the yaml configuration file : `src/conf/compressed_sensing.yaml`
+- For Matrix Factorization task, edit the yaml configuration file : `src/conf/matrix_factorization.yaml`
 
 
 ## Start an experiment
-train.py takes as argument a configuration yaml from conf and trains the corresponding model. 
+`train.py` takes as argument a configuration yaml from conf and trains the corresponding model. 
 So you can try:
 For sparse recovery training 
 ```bash
@@ -34,19 +34,19 @@ For matrix factorization
 python train.py --config conf/matrix_factorization.yaml
 ```
 The evaluation part will start automatically after the training.
-The eval.ipynb notebook contains code to load our own pre-trained models and plot the pre-computed metrics
+`The eval.ipynb` notebook contains code to load our own pre-trained models and plot the pre-computed metrics
 
 
 ## Code organisation
-- train.py  →  main script for training
-- models.py → models defintion and baselines
-- eval.py → evaluation script
-- tasks.py → task definitions (sparse recovery, matrix factorization)
-- src/conf/ → configuration files (YAML) to run different experiments
-- samplers.py → data generation scripts
-- sparse_recovery/compressed_sensing.py (resp. sparse_recovery/matrix_factorization.py) → all functions for matrix creation, base Φ creation etc.
-- models/sparse_recovery → directories containing checkpoints & results (metrics.json, generate after evaluation part)
-- models/matrix_factorization → directories containing checkpoints & results (metrics.json, generate after evaluation part)
+- `train.py`  →  main script for training
+- `models.py` → models defintion and baselines
+- `eval.py` → evaluation script
+- `tasks.py` → task definitions (sparse recovery, matrix factorization)
+- `src/conf/` → configuration files (YAML) to run different experiments
+- `samplers.py` → data generation scripts
+- `sparse_recovery/compressed_sensing.py` (resp. `sparse_recovery/matrix_factorization.py`) → all functions for matrix creation, base Φ creation etc.
+- `models/sparse_recovery` → directories containing checkpoints & results (`metrics.json`, generate after evaluation part)
+- `models/matrix_factorization` → directories containing checkpoints & results (`metrics.json`, generate after evaluation part)
 
 ## Contributors
 - Patrick C. Talom
