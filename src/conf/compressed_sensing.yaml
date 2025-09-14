@@ -3,11 +3,12 @@ inherit:
 
 training:
   task: compressed_sensing
+  data: sparse_recovery
   task_kwargs:
     sparsity: 3
     N: 50
-    Phi: normal  # choose between: identity, fourier, normal
-    d: 20
+    Phi: normal  # choose between: orthonormal, fourier, normal, identity
+    d: 20 # n in the paper
     tau: 0 # in [0, 1]
   curriculum:
     points:

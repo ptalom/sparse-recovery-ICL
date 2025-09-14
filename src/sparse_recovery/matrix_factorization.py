@@ -193,70 +193,7 @@ def generate_orthogonal_U_V(n_1, n_2, tau_1, tau_2):
 
     return U, V
 
-# n_1, n_2 = 100, 100
-# #Modulate
-# all_mu = []
-# all_nu = []
-# all_tau = np.arange(0, 10+1)/10
-# for tau_1, tau_2 in zip(all_tau, all_tau) :
-#     U, V = generate_orthogonal_U_V(n_1, n_2, tau_1, tau_2)
-#     Sigma = np.eye(max(n_1, n_2))[:n_1, :n_2] # (n_1, n_2)
-#     r=5#min(n_1, n_2)
-#     A = U[:,:r] @ Sigma[:r, :r] @ V[:,:r].T # (n_1, n_2)
 
-#     mu = calculate_coherence(A=U, B=np.eye(n_1))
-#     nu = calculate_coherence(A=V, B=np.eye(n_2))
-#     print(mu, nu)
-
-#     mu, nu = calculate_local_coherence(A, U_n1=None, V_n2=None)
-#     all_mu.append(mu)
-#     all_nu.append(nu)
-#     print(alpha, max(max(mu), max(nu)), max(mu), max(nu))
-#     print("=================")
-
-
-
-# from matplotlib.colors import LogNorm
-# label_fontsize=20
-# ticklabel_fontsize=15
-
-# rows, cols = 1, 2
-# figsize=(6, 4)
-# #figsize=(8, 6)
-# #figsize=(15, 10)
-# figsize=(cols*figsize[0], rows*figsize[1])
-# fig = plt.figure(figsize=figsize)
-
-# for i, (label, data) in enumerate(zip(["mu", "nu"], [all_mu, all_nu])):
-
-#     ax = fig.add_subplot(rows, cols, i+1)
-
-#     img_data = np.array(data) # (alphas, dimensions)
-#     img = custom_imshow(
-#         img_data, ax=ax, fig=fig, add_text=False,
-#         hide_ticks_and_labels=False, xticklabels=np.arange(1, img_data.shape[1]+1), yticklabels=all_tau,
-#         filter_step_xticks=5, filter_step_yticks=1  if i==0 else 10**5, log_x=False, log_y=False, base=10,
-#         rotation_x=90, rotation_y=0,
-#         x_label="Dimensions (n)",  y_label="$\\alpha$" if i==0 else "",
-#         # Use LogNorm to apply a logarithmic scale
-#         colormesh_kwarg={"shading":'auto', "cmap":'viridis'}, # 'norm':LogNorm(vmin=img_data.min(), vmax=img_data.max())
-#         imshow_kwarg={},
-#         colorbar=True, colorbar_label=f'$\\{label}$',
-#         label_fontsize=label_fontsize,
-#         ticklabel_fontsize=ticklabel_fontsize,
-#         show=False, fileName=None, dpf=None
-#     )
-
-# ##
-# #plt.savefig(f"{DIR_PATH_FIGURES}/TODO"  + '.pdf', dpi=300, bbox_inches='tight', format='pdf')
-
-# plt.show()
-
-
-########################################################################################
-########################################################################################
-
-# Face splitting product
 
 def F_numpy(A, X1X2=None, X2_bullet_X1=None) :
     """
@@ -274,8 +211,7 @@ def F_numpy(A, X1X2=None, X2_bullet_X1=None) :
         # X2_bullet_X1 = face_splitting_product_numpy(X2, X1) # (N, n_1 x n_2)
         # y_star = X2_bullet_X1 @ np_vec(A) # (N, n_1 x n_2) x (n_1 x n_2,) = (N,)
     return y_star # (N,)
-
-
+'''''
 def F_cvxpy(A, X1X2=None, X2_bullet_X1=None):
     """
     Compute the linear mapping applied to A:
@@ -291,6 +227,85 @@ def F_cvxpy(A, X1X2=None, X2_bullet_X1=None):
         # Symbolic computation for individual terms
         X1, X2 = X1X2
         return cp.vstack([cp.sum(cp.multiply(X1[s][:, None] @ X2[s][None, :], A)) for s in range(X1.shape[0])])
+'''
+
+
+
+import numpy as np
+import torch
+import cvxpy as cp
+
+def F_cvxpy(A, X1=None, X2=None, X1X2=None, X2_bullet_X1=None):
+    """
+    Compute <X1_i @ X2_i^T, A> for each i.
+
+    A : np.ndarray, torch.Tensor, or cp.Variable / cp.Expression
+    X1, X2 : arrays or tensors with shape (batch, n1) and (batch, n2) OR
+             for convenience accept X1 entries as (batch, n1) and X2 as (batch, n2)
+             and we treat outer product x1[:,None] @ x2[None,:].
+    X1X2 : tuple (X1, X2)
+    X2_bullet_X1 : optional precomputed vectorized mapping (batch, n1*n2)
+
+    Returns:
+        - If A is a cvxpy Variable/Expression: returns a column cvxpy expression of shape (batch, 1)
+        - If A is torch.Tensor: returns torch.tensor shape (batch,)
+        - If A is np.ndarray: returns numpy array shape (batch,)
+    """
+    # If precomputed vectorized mapping is given (X2_bullet_X1 @ vec(A))
+    if X2_bullet_X1 is not None:
+        # CVXPY case
+        if isinstance(A, (cp.Variable, cp.Expression)):
+            # X2_bullet_X1 should be either np.ndarray or cp.Constant; ensure it's compatible
+            return (X2_bullet_X1 @ cp.vec(A)).reshape((-1, 1))
+        else:
+            # numeric: flatten A and multiply
+            vecA = A.flatten()
+            return X2_bullet_X1 @ vecA
+
+    # unpack X1, X2 if provided as tuple
+    if X1 is None or X2 is None:
+        X1, X2 = X1X2
+
+    # --- CVXPY symbolic case ---
+    if isinstance(A, (cp.Variable, cp.Expression)):
+        exprs = []
+        # ensure X1, X2 are numpy arrays for safe use in cvxpy expressions
+        for i in range(int(np.asarray(X1).shape[0])):
+            x1_i = np.asarray(X1[i]).reshape(-1)   # (n1,)
+            x2_i = np.asarray(X2[i]).reshape(-1)   # (n2,)
+            # x1_i[:,None] @ x2_i[None,:] is a numeric (n1,n2) matrix
+            # multiply elementwise with A (cvxpy var) then sum -> scalar
+            expr_i = cp.sum(cp.multiply(x1_i[:, None] @ x2_i[None, :], A))
+            exprs.append(expr_i)
+        # return column vector (batch,1) => compatible with y shaped (batch,1)
+        return cp.vstack(exprs)
+
+    # --- PyTorch numeric case ---
+    if isinstance(A, torch.Tensor):
+        # expect X1, X2 numeric either torch or numpy; convert to torch if needed
+        X1_t = X1 if isinstance(X1, torch.Tensor) else torch.tensor(np.asarray(X1), dtype=A.dtype, device=A.device)
+        X2_t = X2 if isinstance(X2, torch.Tensor) else torch.tensor(np.asarray(X2), dtype=A.dtype, device=A.device)
+        batch = X1_t.shape[0]
+        out = torch.zeros(batch, dtype=A.dtype, device=A.device)
+        # compute sum over elementwise (x1 outer x2) * A  -> scalar per batch
+        for i in range(batch):
+            # outer = x1_i[:,None] @ x2_i[None,:]
+            outer = X1_t[i].unsqueeze(1) @ X2_t[i].unsqueeze(0)  # (n1,n2)
+            out[i] = torch.sum(outer * A)
+        return out
+
+    # --- NumPy numeric case ---
+    if isinstance(A, np.ndarray):
+        X1_a = np.asarray(X1)
+        X2_a = np.asarray(X2)
+        batch = X1_a.shape[0]
+        out = np.zeros(batch, dtype=A.dtype)
+        for i in range(batch):
+            outer = np.outer(X1_a[i], X2_a[i])  # (n1, n2)
+            out[i] = np.sum(outer * A)
+        return out
+
+    raise ValueError(f"Unsupported type for A: {type(A)}")
 
 ########################################################################################
 ########################################################################################
@@ -362,9 +377,11 @@ def get_measures_matrix_sensing(A_star, U_star, V_star, N, tau=0.0, variance=Non
     M1, X1 = get_measures(N, Phi=U_star, tau=tau, variance=variance, seed=seed)
     M2, X2 = get_measures(N, Phi=V_star, tau=tau, variance=variance, seed=seed)
     X2_bullet_X1 = None
+
     X2_bullet_X1 = face_splitting_product_numpy(X2, X1)
     #y_star = F_cvxpy(A_star, X1X2=(X1, X2), X2_bullet_X1=X2_bullet_X1)
     y_star = F_numpy(A_star, X1X2=(X1, X2), X2_bullet_X1=X2_bullet_X1)
+
     return X1, X2, X2_bullet_X1, y_star
 
 def get_data_matrix_factorization(A_star, U_star, V_star, N, problem, tau=0.0, variance=None, seed=None) :

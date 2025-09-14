@@ -53,7 +53,13 @@ def train(model, args):
 
     n_dims = model.n_dims
     bsize = args.training.batch_size
-    data_sampler = get_data_sampler(args.training.data, n_dims=n_dims)
+
+    # Instancier le sampler en fonction de la tâche
+    if args.training.task == "matrix_factorization":
+        data_sampler = get_data_sampler(args.training.data, n_dims=n_dims, **args.training.task_kwargs)
+    else:
+        data_sampler = get_data_sampler(args.training.data, n_dims=n_dims)
+
     task_sampler = get_task_sampler(
         args.training.task,
         n_dims,
@@ -61,8 +67,8 @@ def train(model, args):
         num_tasks=args.training.num_tasks,
         **args.training.task_kwargs,
     )
+    task = task_sampler() 
     pbar = tqdm(range(starting_step, args.training.train_steps))
-
     num_training_examples = args.training.num_training_examples
 
     for i in pbar:
@@ -77,19 +83,20 @@ def train(model, args):
             data_sampler_args["seeds"] = seeds
             task_sampler_args["seeds"] = [s + 1 for s in seeds]
 
+        # ⚡ Utiliser directement le sampler pour MatrixFactorization
         xs = data_sampler.sample_xs(
-            curriculum.n_points,
-            bsize,
-            curriculum.n_dims_truncated,
+            n_points=curriculum.n_points,
+            batch_size=bsize,
+            n_dims_truncated=curriculum.n_dims_truncated,
             **data_sampler_args,
         )
-        task = task_sampler(**task_sampler_args)
-        ys = task.evaluate(xs)
+        
+        if args.training.task == "matrix_factorization":
+            ys = task.evaluate(xs)  # xs est de shape (B, n_points, n1+n2)
+        else:
+            ys = task.evaluate(xs)
 
         loss_func = task.get_training_metric()
-
-        #loss, output = train_step(model, xs.cuda(), ys.cuda(), optimizer, loss_func)
-        
         loss, output = train_step(model, xs.to(device), ys.to(device), optimizer, loss_func)
 
         point_wise_tags = list(range(curriculum.n_points))
@@ -119,8 +126,8 @@ def train(model, args):
             )
 
         curriculum.update()
-
         pbar.set_description(f"loss {loss}")
+
         if i % args.training.save_every_steps == 0 and not args.test_run:
             training_state = {
                 "model_state_dict": model.state_dict(),
@@ -154,6 +161,12 @@ def main(args):
             name=args.wandb.name,
             resume=True,
         )
+
+    # ⚡ Fix n_dims pour MatrixFactorization
+    if args.training.task == "matrix_factorization":
+        n1 = args.training.task_kwargs.n1
+        n2 = args.training.task_kwargs.n2
+        args.model.n_dims = n1 + n2  # met à jour la dimension du modèle
 
     model = build_model(args.model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

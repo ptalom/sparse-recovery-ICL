@@ -1,0 +1,25 @@
+inherit: 
+  - base.yaml
+
+training:
+  task: matrix_factorization
+  data: matrix_factorization
+  task_kwargs:
+    N: 50
+    n1: 20
+    n2: 20
+    rank: 3
+    problem: matrix-completion   # matrix-completion or matrix-sensing
+    tau: 0  # in [0,1] 
+    seed: 42
+  curriculum:
+    points:
+      start: 20
+      end: 20
+      inc: 0
+      interval: 2000
+
+out_dir: ../models/matrix_factorization
+
+wandb:
+  name: "matrix_factorization"

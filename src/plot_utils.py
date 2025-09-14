@@ -19,8 +19,8 @@ relevant_model_names = {
     ],
     "matrix_factorization": [
         "Transformer",
-        "Lasso (alpha=0.01)",
-        "Nuclear Norm",
+        "Least Squares",
+        "Nuclear Norm Minimization (epsilon=1e-06)",
     ],
 }
 

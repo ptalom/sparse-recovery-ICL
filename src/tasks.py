@@ -8,7 +8,6 @@ from sparse_recovery.compressed_sensing import create_signal, create_Fourier_bas
 from sparse_recovery.matrix_factorization import get_matrices_UV
 
 
-
 def squared_error(ys_pred, ys):
     return (ys - ys_pred).square()
 
@@ -59,7 +58,6 @@ def get_task_sampler(
     task_name, n_dims, batch_size, pool_dict=None, num_tasks=None, **kwargs
 ):
     task_names_to_classes = {
-        "linear_regression": LinearRegression,
         "compressed_sensing": CompressedSensing,
         "matrix_factorization": MatrixFactorization,
     }
@@ -163,7 +161,6 @@ class CompressedSensing(Task):
         return ys_b
 
 
-
     @staticmethod
     def get_metric():
         return squared_error
@@ -174,41 +171,89 @@ class CompressedSensing(Task):
     
 
 class MatrixFactorization(Task):
-    
-    def __init__(
-        self,
-        N: int,
-        n1: int,
-        n2: int,
-        rank: int,
-        problem: str = "matrix-completion",   # 'matrix-completion' / 'matrix-sensing'
-        tau: float = 0.0,                     
-        variance=None,
-        seed: int | None = None,
-        device: str = "cpu",
-    ):
-        assert problem in ("matrix-completion", "matrix-sensing"), \
-            f"problem must be 'matrix-completion' or 'matrix-sensing', received :{problem}"
-        assert 0.0 <= tau <= 1.0, f"tau must be in [0,1], received {tau}"
+    def __init__(self, n_dims=None, batch_size=None, pool_dict=None,
+                 n1=20, n2=20, rank=5, N=50, tau=0.0, variance=None,
+                 problem="matrix-completion", seed=None, target_rank=None, **kwargs):
+        self.target_rank = target_rank
+        if "target_rank" in kwargs:
+            kwargs.pop("target_rank") 
+
+        super().__init__(n_dims, batch_size, pool_dict, **kwargs)
 
         self.N = N
         self.n1 = n1
         self.n2 = n2
-        self.rank = rank
-        self.problem = problem
+        self.rank = rank if target_rank is None else target_rank
         self.tau = tau
         self.variance = variance
+        self.problem = problem
         self.seed = seed
-        self.device = device
 
-        A_star, U_star, Sigma_star, V_star = get_matrices_UV(
-            n_1=n1, n_2=n2, rank=rank, seed=seed
+        if not (0.0 <= self.tau <= 1.0):
+            raise ValueError(f"tau must in [0,1], reçu {self.tau}")
+        #print(f"[DEBUG TASK] A_star min={self.A_star.min()}, max={self.A_star.max()}, shape={self.A_star.shape}")
+
+        self.A_star, self.U_star, self.Sigma_star, self.V_star = get_matrices_UV(
+            n1, n2, self.rank, symmetric=False, normalize=True, scale=None, seed=seed
         )
-        self.A_star = A_star.astype(np.float32)
-        self.U_star = U_star.astype(np.float32)
-        self.V_star = V_star.astype(np.float32)
-        
-        self.Sigma_star = Sigma_star.astype(np.float32)
 
-        print(f"[Matrix Factorization Sampler] A*: {self.A_star.shape}, U*: {self.U_star.shape}, V*: {self.V_star.shape}")
-        print(f"[Matrix Factorization Sampler] problem={self.problem}, N={self.N}, tau={self.tau}")
+        self.A_b = torch.tensor(self.A_star, dtype=torch.float32)
+        self.U_b = torch.tensor(self.U_star, dtype=torch.float32)
+        self.V_b = torch.tensor(self.V_star, dtype=torch.float32)
+    
+
+    def update_from_sampler(self, sampler):
+        """
+        Synchroniser la task avec le sampler qui génère réellement les données.
+        Appeler ceci avant evaluation si le sampler peut changer (différentes dims).
+        """
+        # copier matrices / paramètres depuis le sampler (sampler vient de get_data_sampler)
+        self.A_star = getattr(sampler, "A_star", self.A_star)
+        self.U_star = getattr(sampler, "U_star", self.U_star)
+        self.V_star = getattr(sampler, "V_star", self.V_star)
+        self.Sigma_star = getattr(sampler, "Sigma_star", getattr(self, "Sigma_star", None))
+
+        # dims / autres paramètres
+        self.n1 = int(getattr(sampler, "n1", self.n1))
+        self.n2 = int(getattr(sampler, "n2", self.n2))
+        self.N = int(getattr(sampler, "N", self.N))
+        self.rank = getattr(sampler, "rank", self.rank)
+        self.tau = getattr(sampler, "tau", self.tau)
+        self.variance = getattr(sampler, "variance", self.variance)
+        self.problem = getattr(sampler, "problem", self.problem)
+        self.seed = getattr(sampler, "seed", self.seed)
+
+        # mettre à jour les tensors si besoin
+        self.A_b = torch.tensor(self.A_star, dtype=torch.float32)
+        self.U_b = torch.tensor(self.U_star, dtype=torch.float32)
+        self.V_b = torch.tensor(self.V_star, dtype=torch.float32)
+
+  
+
+    def evaluate(self, xs_b, sampler=None):
+        if sampler is not None:
+            self.update_from_sampler(sampler)
+
+        X1 = xs_b[:, :, :self.n1]
+        X2 = xs_b[:, :, self.n1:]
+
+        if X1.shape[-1] != self.n1 or X2.shape[-1] != self.n2:
+            raise ValueError(
+                f"Shapes invalides: X1 {X1.shape}, X2 {X2.shape}, attendu n1={self.n1}, n2={self.n2}"
+            )
+
+        A_tensor = torch.as_tensor(self.A_star, dtype=torch.float32, device=xs_b.device)
+
+        print(f"[DEBUG EVAL FIX] A_star shape={A_tensor.shape}, "
+            f"X1 shape={X1.shape}, X2 shape={X2.shape}")
+
+        ys_b = torch.einsum('bni,ij,bnj->bn', X1, A_tensor, X2)
+        return ys_b
+
+    @staticmethod
+    def get_metric():
+        return squared_error
+
+    @staticmethod
+    def get_training_metric():
+        return mean_squared_error
