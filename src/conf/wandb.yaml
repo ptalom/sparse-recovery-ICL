@@ -1,5 +1,5 @@
 wandb:
     project: in-context-training
-    entity: your-entity
+    entity: patrycktalom-ecole-nationale-sup-rieure-polytechnique-de
     notes:
     log_every_steps: 100

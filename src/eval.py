@@ -250,8 +250,8 @@ def build_evals(conf):
         
         evaluation_kwargs["standard"] = {"prompting_strategy": "standard"}
         evaluation_kwargs["tau=0"] = {"prompting_strategy": "coherence_tau_0"}
-        evaluation_kwargs["tau=0.5"] = {"prompting_strategy": "coherence_tau_05"}
-        evaluation_kwargs["tau=1"] = {"prompting_strategy": "coherence_tau_1"}
+        #evaluation_kwargs["tau=0.5"] = {"prompting_strategy": "coherence_tau_05"}
+        #evaluation_kwargs["tau=1"] = {"prompting_strategy": "coherence_tau_1"}
 
         # Evaluation bruitée pour Sparse Recovery
         #evaluation_kwargs["noisy_sparse"] = {
@@ -498,17 +498,6 @@ def read_run_dir(run_dir):
     assert len(df) == len(df.run_name.unique())
     return df
 
-'''
-if __name__ == "__main__":
-    run_dir = sys.argv[1]
-    for task in os.listdir(run_dir):
-        task_dir = os.path.join(run_dir, task)
-        print(f"Evaluating task {task}")
-        for run_id in tqdm(os.listdir(task_dir)):
-            run_path = os.path.join(run_dir, task, run_id)
-            metrics = get_run_metrics(run_path)
-
-'''
 
 if __name__ == "__main__":
     run_dir = sys.argv[1]

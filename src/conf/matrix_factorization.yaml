@@ -14,8 +14,8 @@ training:
     seed: 42
   curriculum:
     points:
-      start: 20
-      end: 20
+      start: 41
+      end: 41
       inc: 0
       interval: 2000
 

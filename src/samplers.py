@@ -13,10 +13,7 @@ class DataSampler:
         raise NotImplementedError
 
 def get_data_sampler(data_name, n_dims, **kwargs):
-    """
-    Retourne une instance du sampler correspondant au nom de data_name,
-    en passant n_dims comme argument obligatoire.
-    """
+    
     samplers = {
         "sparse_recovery": CompressedSensingSampler,
         "matrix_factorization": MatrixFactorizationSampler,
